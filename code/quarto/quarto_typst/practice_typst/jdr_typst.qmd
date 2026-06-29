@@ -1,0 +1,1366 @@
+---
+title: "Jury Data Report"
+subtitle: "2015-16 Through 2024-25"
+author: "Research, Analytics, and Data"
+#date: today
+#logo: "100_yr_logo.png"
+bibliography: references.bib
+format:
+  typst:
+    toc: true
+    toc-depth: 2
+    number-sections: false
+    margin:
+      top: 1in
+      bottom: 1in
+      left: 1in
+      right: 1in
+    fig-width: 8.125
+    fig-height: 5
+    template-partials:
+      - typst-template.typ
+      - typst-show.typ
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: false
+---
+
+```{r setup}
+#| include: false
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+# Load libraries
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(lubridate)
+library(here)
+library(gt)
+library(typstable)
+library(scales)
+library(ggtext)
+
+# Load data
+jdr <- read_csv(here("data/processed/jury_data_transformed.csv"))
+this_year <- year(today())
+jdr_last_five <- jdr |>
+  filter(year(end_date) >= this_year - 5)
+
+jdr_last_ten <- jdr |>
+  filter(year(end_date) >= this_year - 10)
+```
+
+# Introduction
+
+Since fiscal year 2007, the Judicial Council of California has administered an opt-in survey to each California trial court to collect operational data on jury department performance. The survey captures metrics aligned with the National Center for Court Studies' (NCSC) 8th Trial Court Performance Measure on the Effective Use of Jurors. Courts use these metrics to streamline juror summons and qualification, and to increase the rate at which they seat juries from the available pool of jurors.
+
+This report summarizes statewide jury metrics for the most recent reporting year and presents ten-year historical trends. It provides a comprehensive overview of jury summoning outcomes, juror availability, case type distributions, and the effectiveness of the jury selection pipeline across California's superior courts. The Judicial Council intends for these findings to support more efficient jury operations statewide and to better meet the demands of modern jury service.
+
+<!-- ```{=typst}
+#introline()
+``` -->
+
+# Definitions
+
+## Jury Summoning
+
+**NEWLY SUMMONED.** The total number of prospective jurors who received a summons to appear for jury service, whether by mail, electronic service, or other means. This figure represents the initial pool of potential jurors contacted by trial courts.
+
+**POSTPONED IN.** Prospective jurors fom a prior-period who had postponed their service to the current period, and are hence summoned for service in the current period in lieu of their prior-period obligation.
+
+**TOTAL SUMMONED.** The total amount of jurors summoned for jury service in the current period; the summation of Newly Summoned and Postponed In.
+
+**QUALIFIED AND AVAILABLE.** Prospective jurors who appear for jury service, meet all statutory and qualifications for service, and are available for potential jury selection. These individuals have not been excused, disqualified, or otherwise removed due to unvailability.
+
+## Reasons for Juror Unavailability
+
+**EXCUSED.** Prospective jurors who are released from jury service due to hardship or other personal reasons. Excused jurors may be excused for a single trial or for an extended period.
+
+**DISQUALIFIED.** Prospective jurors who do not meet the statutory requirements for jury service, including citizenship, language proficiency, or certain criminal history criteria.
+
+**DISMISSED.** Prospective Jurors who are exempt from jury service, either for employment as a peace officer or being deceased.
+
+**UNDELIVERED.** Summonses that could not be delivered to the prospective juror due to incorrect address, inability to locate the individual.
+
+**FAILURE TO APPEAR.** Prospective jurors who received a valid summons but did not appear on their scheduled date without authorization.
+
+**POSTPONED OUT.** Prospective jurors whose service is postponed to a future date after their initial scheduled appearance or who request postponement and whose service is deferred to a later period.
+
+## Jury Utilization
+
+**TOLD TO REPORT.** The percentage of summoned prospective jurors who are instructed to physically appear for jury service. Not all summoned jurors are called to report; many complete their service by simply waiting on-call or on telephone.
+
+**SENT FOR SELECTION.** The percentage of prospective jurors told to report who are actually sent to a courtroom for jury selection proceedings. Some may be released or dismissed prior to reaching the selection phase.
+
+**PANEL USED.** The percentage of prospective jurors sent for selection who are ultimately assigned to a jury panel, either sworn or released during or after jury selection. This represents the final stage of the jury utilization pipeline.
+
+## Jury Trial Types and Designations
+
+**FELONY, MISDEMEANOR, CIVIL, AND OTHER.** Case types distinguish the nature of the matter being tried. Felony cases involve serious criminal offenses; misdemeanor cases involve lesser criminal offenses; civil cases involve disputes between private parties or entities; and other cases include specialized proceedings.
+
+**ONE DAY JURORS.** Qualified and available jurors who finish their service in one day, whether it be on call, on standby, or in person are considered one-day jurors. In-person designations indicate physical courtroom appearance, while teleconference designations indicate remote participation.
+
+
+
+# Jury utilization
+
+Jury utilization is the proportion of total summoned jurors who are qualified and available for jury service, as specified in percentage terms below.
+
+```{=typst}
+$ "Jury utilization (%)" = "Available Jurors" / ("Available Jurors" + "Unavailable Jurors") dot 100 $
+```
+
+Jury utilization is a key performance measure that reflects the efficiency of the jury summoning process and the effectiveness of courts in converting summoned jurors into usable jurors for trials.
+
+```{r figure-1}
+#| fig-cap: "Jury utilization Trends"
+
+jury_utilization <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    s                = sum(summons, na.rm = TRUE) + sum(postin, na.rm = TRUE),
+    summons          = sum(summons, na.rm = TRUE),
+    postin           = sum(postin, na.rm = TRUE),
+    qualified        = s -
+                       sum(excused,       na.rm = TRUE) -
+                       sum(disqual,       na.rm = TRUE) -
+                       sum(dismiss_peace, na.rm = TRUE) -
+                       sum(dismiss_dead,  na.rm = TRUE) -
+                       sum(undel,         na.rm = TRUE) -
+                       sum(fta,           na.rm = TRUE) -
+                       sum(postout,       na.rm = TRUE),
+    unavailable      = sum(unavailable, na.rm = TRUE),
+    .pot_avail       = sum(potentially_available, na.rm = TRUE),
+    utilization_pct        = round(qualified / .pot_avail * 100, 2)
+  )
+
+df <- jury_utilization |>
+  arrange(desc(year)) |>
+  transmute(
+    year,
+    qualified   = round(qualified / 1e6, 2),
+    unavailable = round(unavailable / 1e6, 2),
+    utilization_pct   = utilization_pct
+  )
+
+df_long <- df |>
+  pivot_longer(
+    c(qualified, unavailable),
+    names_to = "segment",
+    values_to = "millions"
+  ) |>
+  mutate(
+    segment = factor(segment, levels = c("unavailable", "qualified"))
+  )
+
+scale_factor <- 13.5 / 100
+
+fy_labels <- function(x) paste0("'", substr(x, 3, 4))
+df_long <- df_long |>
+  mutate(
+    utilization_pct = round(utilization_pct, 2)
+  )
+
+jury_utilization_basic <- ggplot() +
+  geom_col(
+    data = df_long,
+    aes(
+      x = factor(year),
+      y = millions,
+      fill = segment
+    ),
+    color = "black",
+    linewidth = 0.3,
+    position = "stack",
+    width = 0.6
+  ) +
+  geom_line(
+    data = df,
+    aes(
+      x = factor(year),
+      y = utilization_pct * scale_factor,
+      group = 1,
+      color = "Jury utilization %"
+    ),
+    linewidth = 0.6
+  ) +
+  geom_point(
+    data = df,
+    aes(
+      x = factor(year),
+      y = utilization_pct * scale_factor,
+      color = "Jury utilization %"
+    ),
+    size = 2
+  ) +
+  geom_text(
+    data = df,
+    aes(
+      x = factor(year),
+      y = utilization_pct * scale_factor,
+      label = paste0(round(utilization_pct, 0), "%")
+    ),
+    vjust = -0.8,
+    hjust = 0.5,
+    color = "red",
+    size = 3.5
+  ) +
+  scale_y_continuous(
+    name = "Total Summoned Jurors",
+    labels = function(x) ifelse(x > 13.5, "", paste0(x, "M")),
+    breaks = seq(0, 13.5, by = 2),
+    limits = c(0, 13.5),
+    expand = expansion(mult = c(0, 0)),
+    sec.axis = sec_axis(
+      ~ . / scale_factor,
+      name = "Jury utilization %",
+      labels = function(x) paste0(round(x), "%"),
+      breaks = seq(0, 100, by = 15)
+    )
+  ) +
+  scale_x_discrete(labels = fy_labels) +
+  scale_fill_manual(
+    values = c(
+      unavailable = "grey90",
+      qualified = "grey50"
+    ),
+    labels = c(
+      unavailable = "Unavailable",
+      qualified = "Available"
+    )
+  ) +
+  scale_color_manual(
+    values = c("Jury utilization %" = "red")
+  ) +
+  labs(
+    x = NULL,
+    fill = NULL,
+    color = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90"),
+    axis.title.y = element_text(size = 12),
+    axis.title.y.right = element_text(size = 12, color = "red"),
+    axis.text.y.right = element_text(size =12, color = "red"),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    legend.text = element_text(size = 12),
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.margin = margin(t = 12, r = 12, b = 8, l = 12),
+    axis.text = element_text(size = 11)
+  )
+
+jury_utilization_basic
+```
+
+Figure 1 shows total summoned jurors having reached nearly 12 million each year since FY 2020-23. Both available and unavailable jurors increased post-2020, while utilization has remained stable. While the number of jurors summoned has increased, the percentage of those jurors who are qualified and available has not changed significantly, indicating that the increase in summons has not translated into a higher utilization of usable jurors.
+
+
+<!-- 
+###  Unavailable Jurors by Subcategory
+
+```{r figure-2}
+#| fig-cap: "Unavailable Jurors by Subcategory"
+
+unavailable <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    ex   = sum(excused,       na.rm = TRUE) + sum(postin,   na.rm = TRUE),
+    disq = sum(disqual,       na.rm = TRUE),
+    dism = sum(dismiss_peace, na.rm = TRUE) + sum(dismiss_dead, na.rm = TRUE),
+    undel= sum(undel,         na.rm = TRUE),
+    fta  = sum(fta,           na.rm = TRUE),
+    pos  = sum(postout,       na.rm = TRUE),
+    s    = sum(summons, na.rm = TRUE) + sum(postin, na.rm = TRUE)
+  )
+
+unavailable_bar <- unavailable |>
+  pivot_longer(
+    cols      = c(ex, disq, dism, undel, fta, pos),
+    names_to  = "component",
+    values_to = "count"
+  ) |>
+  mutate(
+    component = recode(component,
+      ex    = "Excused",
+      disq  = "Disqualified",
+      dism  = "Dismissed",
+      undel = "Undelivered",
+      fta   = "Failure to Appear",
+      pos   = "Postponed Out"
+    ),
+    component = factor(component, levels = c(
+      "Excused", "Postponed Out", "Undelivered",
+      "Dismissed", "Disqualified", "Failure to Appear"
+    )),
+    millions = count / 1e6
+  )
+
+bar_palette <- c(
+  "Excused"           = "grey85",
+  "Postponed Out"     = "grey72",
+  "Undelivered"       = "grey58",
+  "Dismissed"         = "grey44",
+  "Disqualified"      = "grey28",
+  "Failure to Appear" = "#2c2c2c"
+)
+
+ggplot(unavailable_bar, aes(x = factor(year), y = millions, fill = component)) +
+  geom_col(
+    color    = "black",
+    linewidth = 0.3,
+    position = "stack",
+    width    = 0.6
+  ) +
+  scale_fill_manual(values = bar_palette) +
+  scale_y_continuous(
+    name   = "Unavailable Jurors",
+    labels = function(x) paste0(x, "M"),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  scale_x_discrete(labels = function(x) paste0("'", substr(x, 3, 4))) +
+  labs(x = NULL, fill = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.y = element_line(color = "grey90"),
+    axis.title.y       = element_text(size = 12),
+    axis.text          = element_text(size = 11),
+    legend.position    = "bottom",
+    legend.direction   = "horizontal",
+    legend.text        = element_text(size = 12),
+    plot.background    = element_rect(fill = "white", color = NA),
+    panel.background   = element_rect(fill = "white", color = NA),
+    plot.margin        = margin(t = 12, r = 12, b = 8, l = 12)
+  )
+```
+
+The above barchart shows reasons for unavailability broken out into segments and their respective trends over the last ten years. The trend shows that not only is failing to appear the most prominent reason for unavailability, but it also seems to have increased disproportionately to other subcategories in the 10 years since FY 2015-16. -->
+
+```{r figure-3}
+#| fig-cap: "Unavailable Jurors — Indexed Change by Subcategory"
+
+unavailable <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    ex   = sum(excused,       na.rm = TRUE),
+    disq = sum(disqual,       na.rm = TRUE),
+    dism = sum(dismiss_peace, na.rm = TRUE) + sum(dismiss_dead, na.rm = TRUE),
+    undel= sum(undel,         na.rm = TRUE),
+    fta  = sum(fta,           na.rm = TRUE),
+    pos  = sum(postout,       na.rm = TRUE),
+    s    = sum(summons, na.rm = TRUE) + sum(postin, na.rm = TRUE)
+  ) |>
+  arrange(desc(year))
+
+unavailable_long <- unavailable |>
+  pivot_longer(
+    cols      = c(ex, disq, dism, undel, fta, pos),
+    names_to  = "component",
+    values_to = "count"
+  ) |>
+  mutate(
+    component = recode(component,
+                       ex    = "Excused",
+                       disq  = "Disqualified",
+                       dism  = "Dismissed",
+                       undel = "Undelivered",
+                       fta   = "Failure to Appear",
+                       pos   = "Postponed Out"
+    )
+  ) |>
+  group_by(component) |>
+  arrange(year, .by_group = TRUE) |>
+  mutate(
+    rate  = count / s,
+    index = rate / rate[year == min(year)]
+  ) |>
+  ungroup() |>
+  mutate(
+    line_color = if_else(
+      component == "Failure to Appear",
+      "#2c2c2c",
+      "#cccccc"
+    )
+  )
+
+ggplot(unavailable_long, aes(x = year, y = index)) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey60", linewidth = 0.4) +
+  geom_line(aes(group = 1, color = line_color), linewidth = 0.8) +
+  geom_point(aes(color = line_color), size = 2) +
+  scale_color_identity() +
+  facet_wrap(~ component) +
+  scale_y_continuous(
+    labels = function(x) paste0(scales::number(x, accuracy = 0.1), "x"),
+    limits = c(
+      min(unavailable_long$index, na.rm = TRUE) * 0.95,
+      max(unavailable_long$index, na.rm = TRUE) * 1.05
+    )
+  ) +
+  scale_x_continuous(
+    breaks = local({
+      yrs <- sort(unique(unavailable_long$year))
+      yrs[yrs %% 2 == max(yrs) %% 2]
+    }),
+    labels = function(x) paste0("'", substr(x, 3, 4))
+  ) +
+  labs(
+    x = NULL, y = NULL
+  ) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.major   = element_blank(),
+    panel.grid.minor   = element_blank(),
+    strip.text = element_text(size = 13),
+    axis.text          = element_text(size = 12)
+  )
+```
+
+
+The line charts above reveal that Failure to Appear (FTA) incidents have risen disproportionately relative to other categories of juror unavailability. Values are indexed to FY 2015–16 (the dashed baseline), with each subsequent year reflecting the proportional change from that reference point. This normalization highlights the relative magnitude of change across categories, surfacing trends in less common categories that could otherwise be hidden in raw counts. This is especially the case with unavailable categories, as
+
+# Jury Utilization
+
+Juror Utilization is the proportion of qualified and available jurors who ultimately are required for a judge to impanel a jury in voire dire. The proportion is expressed by multiplying the proportion of jurors told to report, sent for selection, and ultimately used in a panel, as specified in percentage terms below.
+
+```{=typst}
+$ "Jury Utilization (%)" = "Told to Report (%)" dot "Sent for Selection (%)" dot "Panel Used(%)" dot 100 $
+```
+
+## Jury Utilization Historical Trend
+
+```{r figure-3a}
+#| fig-cap: "Jury Utilization Trend"
+
+utilization_trend <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    total_summoned = sum(summons, na.rm = TRUE) + sum(postin, na.rm = TRUE),
+    tqa            = total_summoned -
+                     sum(excused,       na.rm = TRUE) -
+                     sum(disqual,       na.rm = TRUE) -
+                     sum(dismiss_peace, na.rm = TRUE) -
+                     sum(dismiss_dead,  na.rm = TRUE) -
+                     sum(undel,         na.rm = TRUE) -
+                     sum(fta,           na.rm = TRUE) -
+                     sum(postout,       na.rm = TRUE),
+    oncall         = sum(oncall, na.rm = TRUE),
+    sent_for_sel_n = sum(rel_challenge, na.rm = TRUE) +
+                     sum(rel_hardship,  na.rm = TRUE) +
+                     sum(rel_perempt,   na.rm = TRUE) +
+                     sum(jurors_sworn,  na.rm = TRUE) +
+                     sum(not_reached,   na.rm = TRUE),
+    panel_used_n   = sum(rel_challenge, na.rm = TRUE) +
+                     sum(rel_hardship,  na.rm = TRUE) +
+                     sum(rel_perempt,   na.rm = TRUE) +
+                     sum(jurors_sworn,  na.rm = TRUE),
+    whole_panel_n   = panel_used_n + sum(not_reached, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    told_to_report = (tqa - oncall) / tqa,
+    sent_for_sel   = sent_for_sel_n / (tqa - oncall),
+    panel_used     = panel_used_n / (whole_panel_n),
+    jury_utilization     = told_to_report * sent_for_sel * panel_used * 100
+  )
+
+ggplot(utilization_trend, aes(x = year, y = jury_utilization)) +
+  geom_line(color = "#2c2c2c", linewidth = 0.8) +
+  geom_point(color = "#2c2c2c", size = 2) +
+  scale_y_continuous(
+    labels = function(x) paste0(round(x, 1), "%"),
+    limits = c(
+      0
+      # min(utilization_trend$jury_utilization, na.rm = TRUE) * 0.95
+      ,
+      max(utilization_trend$jury_utilization, na.rm = TRUE) * 1.05
+    )
+  ) +
+  scale_x_continuous(
+    breaks = local({
+      yrs <- sort(unique(utilization_trend$year))
+      yrs[yrs %% 2 == max(yrs) %% 2]
+    }),
+    labels = function(x) paste0("'", substr(x, 3, 4))
+  ) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    axis.text          = element_text(size = 12)
+  )
+```
+
+Juror utilization has risen modestly year over year since the pandemic low, reaching 7.9% in FY 2024-25. This means that for every hundred jurors who appeared at a courthouse for service, judges ultimately questioned about eight in voir dire to either swear them onto a jury or excuse them. While this marks a clear recovery from the pandemic-era low point, utilization has not yet returned to the pre-pandemic 10-year high of 14% in FY 2015-16.
+While utilization measures often fall well below the nationwide average of 25%, research shows that larger courts consistently produce lower rates — courts serving populations over 500,000 average 16% nationally [@hannaford2024jury]. With California courts serving a population of over 39 million, the state's lower utilization follows this national pattern.
+
+## Percentage of jurors utilized at each stage of service
+
+```{r figure-3b}
+#| fig-cap: "Jury Utilization Subcategories"
+
+pipeline <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    total_summoned    = sum(summons, na.rm = TRUE) + sum(postin, na.rm = TRUE),
+    tqa               = total_summoned -
+                        sum(excused,       na.rm = TRUE) -
+                        sum(disqual,       na.rm = TRUE) -
+                        sum(dismiss_peace, na.rm = TRUE) -
+                        sum(dismiss_dead,  na.rm = TRUE) -
+                        sum(undel,         na.rm = TRUE) -
+                        sum(fta,           na.rm = TRUE) -
+                        sum(postout,       na.rm = TRUE),
+    oncall            = sum(oncall, na.rm = TRUE),
+    sent_for_sel_n    = sum(rel_challenge, na.rm = TRUE) +
+                        sum(rel_hardship,  na.rm = TRUE) +
+                        sum(rel_perempt,   na.rm = TRUE) +
+                        sum(jurors_sworn,  na.rm = TRUE) +
+                        sum(not_reached,   na.rm = TRUE),
+    panel_used_n      = sum(rel_challenge, na.rm = TRUE) +
+                        sum(rel_hardship,  na.rm = TRUE) +
+                        sum(rel_perempt,   na.rm = TRUE) +
+                        sum(jurors_sworn,  na.rm = TRUE),
+    whole_panel_n     = panel_used_n + sum(not_reached, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(
+    told_to_report    = (tqa - oncall) / tqa * 100,
+    sent_for_sel      = sent_for_sel_n / (tqa - oncall) * 100,
+    panel_used        = panel_used_n / (whole_panel_n) * 100,
+    juror_utilization = told_to_report / 100 * sent_for_sel / 100 * panel_used / 100 * 100
+  )
+
+
+pipeline_long <- pipeline |>
+  pivot_longer(
+    cols = c(told_to_report, sent_for_sel, panel_used),
+    names_to = "stage",
+    values_to = "percentage"
+  ) |>
+  mutate(
+    stage = factor(stage,
+                   levels = c("told_to_report", "sent_for_sel", "panel_used"),
+                   labels = c("Told to Report", "Sent for Selection", "Panel Used"))
+  )
+
+ggplot(pipeline_long, aes(x = factor(year), y = percentage, fill = stage)) +
+  geom_col(position = "dodge", width = 0.6) +
+  # geom_text(
+  #   aes(label = paste0(round(percentage, 1), "%")),
+  #   position = position_dodge(width = 0.6),
+  #   vjust = -0.5,
+  #   hjust = 0.5,
+  #   size = 2
+  # ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0, 0.1))
+  ) +
+  scale_x_discrete(labels = function(x) paste0("'", substr(x, 3, 4))) +
+  scale_fill_manual(
+    values = c(
+      "Told to Report" = "grey30",
+      "Sent for Selection" = "grey60",
+      "Panel Used" = "grey90"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom",
+    legend.direction = "horizontal",
+    plot.margin = margin(t = 12, r = 12, b = 8, l = 12),
+    axis.text = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+```
+
+Bar chart showing the percentage of summoned prospective jurors who progress through the jury utilization pipeline: told to report, sent for selection, and ultimately used in a panel. The trend shows that while Sent for Selection and Panel Used have remained relatively stable, the percentage of jurors Told to Report has notably decreased since pre-2020 levels, suggesting over-reliance on leaving jurors on telephone around leaving jurors on standby or on-call rather than instructing them to report in person.
+
+<!-- ```{r figure-3b}
+#| fig-cap: "Jury Utilization Pipeline — Distribution by Court"
+
+pipeline_courts <- jdr_last_ten |>
+  filter(
+  between(pc_told_to_report, 0, 1),
+  between(pc_sent_for_sel, 0, 1),
+  between(pc_panel_used, 0, 1)
+        ) |>
+  select(end_year, county, pc_told_to_report, pc_sent_for_sel, pc_panel_used) |>
+  pivot_longer(
+    cols = c(pc_told_to_report, pc_sent_for_sel, pc_panel_used),
+    names_to = "stage",
+    values_to = "percentage"
+  ) |>
+  mutate(
+    percentage = percentage * 100,
+    stage = factor(stage,
+                   levels = c("pc_told_to_report", "pc_sent_for_sel", "pc_panel_used"),
+                   labels = c("Told to Report", "Sent for Selection", "Panel Used")),
+    year_label = paste0("'", substr(as.character(end_year), 3, 4))
+  ) |>
+  drop_na(percentage)
+
+ggplot(pipeline_courts, aes(x = year_label, y = percentage, fill = stage)) +
+  geom_boxplot(
+    position = position_dodge(width = 0.7),
+    width = 0.6,
+    outlier.size = 0.8,
+    outlier.alpha = 0.5,
+    linewidth = 0.4
+  ) +
+  scale_y_continuous(
+    labels = function(x) paste0(x, "%"),
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  scale_fill_manual(
+    values = c(
+      "Told to Report"     = "grey30",
+      "Sent for Selection" = "grey60",
+      "Panel Used"         = "grey90"
+    )
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    legend.position    = "bottom",
+    legend.direction   = "horizontal",
+    plot.margin        = margin(t = 12, r = 12, b = 8, l = 12),
+    axis.text          = element_text(size = 6),
+    legend.text        = element_text(size = 7)
+  )
+```
+
+Box and whisker plot showing the distribution across courts for each pipeline stage and year, with each court as an observation. -->
+
+## Statewide Distribution of Utilization Components 
+
+```{r figure-4}
+#| fig-cap: "Distribution of Jury Utilization Components"
+#| fig-width: 8
+#| fig-height: 5
+
+jdr_2025 <- jdr |>
+  filter(end_year == 2025) |>
+  filter(
+    between(pc_told_to_report, 0, 1),
+    between(pc_sent_for_sel, 0, 1),
+    between(pc_panel_used, 0, 1)
+        ) |>
+  select(county, pc_told_to_report, pc_sent_for_sel, pc_panel_used, juror_utilization) |>
+  pivot_longer(
+    cols = -county,
+    names_to = "measure",
+    values_to = "value"
+  ) |>
+  mutate(
+    measure = factor(measure,
+      levels = c("pc_told_to_report", "pc_sent_for_sel", "pc_panel_used", "juror_utilization"),
+      labels = c("Told to Report", "Sent for Selection", "Panel Used", "Juror Utilization")
+    )
+  ) |>
+  drop_na(value) |>
+  filter(value >= 0, value <= 1)
+
+ggplot(jdr_2025, aes(x = measure, y = value)) +
+  geom_boxplot(
+    width = 0.4,
+    alpha = 0.6,
+    outlier.shape = NA,
+    fill = "#E8E8E8",
+    color = "#333333",
+    linewidth = 0.6
+  ) +
+  scale_y_continuous(
+    labels = scales::percent,
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    x = NULL,
+    y = NULL
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text = element_text(size = 12),
+    plot.margin = margin(t = 12, r = 60, b = 8, l = 12)
+  )
+```
+
+Box and whisker plot showing the distribution of three key measures across all California courts: told to report, sent for selection, and panel used. 50% of courts fall within each respective box, with the median indicated by the horizontal line. The plot illustrates that while the percentage of jurors told to report  and those used in a panel are tightly clustered, jurors sent for selection varies widely across courts, suggesting that variation in jury utilization across courts may be driven more by practices around selection than by practices around summoning or reporting.
+
+<!-- ## Panel Distribution by Case Type
+
+Bar chart showing the distribution of prospective jurors sent for selection by case type (felony, misdemeanor, civil, and other) in the most recent fiscal year. -->
+
+<!-- ```{r figure-5}
+#| fig-cap: "Panel Distribution by Case Type"
+#| fig-width: 6.5
+#| fig-height: 4
+
+panel_types <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    fel   = sum(panels_fel,   na.rm = TRUE),
+    msdo  = sum(panels_msdo,  na.rm = TRUE),
+    civil = sum(panels_civil, na.rm = TRUE),
+    other = sum(panels_other, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+panel_current <- panel_types |>
+  filter(year == max(year)) |>
+  pivot_longer(cols = -year, names_to = "type", values_to = "count") |>
+  mutate(type = factor(type, levels = c("fel", "msdo", "civil", "other"),
+                       labels = c("Felony", "Misdemeanor", "Civil", "Other")))
+
+ggplot(panel_current, aes(x = reorder(type, count), y = count, fill = type)) +
+  geom_col(width = 0.6) +
+  geom_text(
+    aes(label = dplyr::case_when(
+      count >= 1e6 ~ paste0(round(count / 1e6, 1), "m"),
+      count >= 1e3 ~ paste0(round(count / 1e3, 1), "k"),
+      TRUE ~ as.character(count)
+    )),
+    hjust = -0.3,
+    size = 4.5
+  ) +
+  scale_y_continuous(
+    labels = function(x) {
+      dplyr::case_when(
+        x >= 1e6 ~ paste0(round(x / 1e6, 1), "m"),
+        x >= 1e3 ~ paste0(round(x / 1e3,  0), "k"),
+        TRUE     ~ as.character(x)
+      )
+    },
+    expand = expansion(mult = c(0, 0.15))
+  ) +
+  scale_fill_manual(
+    values = c("Felony" = "#808080", "Misdemeanor" = "#808080",
+               "Civil" = "#808080", "Other" = "#808080")
+  ) +
+  labs(
+    x        = NULL,
+    y        = NULL,
+    fill     = NULL
+  ) +
+  coord_flip() +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.major   = element_blank(),
+    panel.grid.minor   = element_blank(),
+    legend.position    = "none",
+    plot.margin        = margin(t = 16, r = 12, b = 8, l = 12),
+    axis.text        = element_text(size = 12),
+    strip.text       = element_text(size = 13)
+  )
+``` -->
+
+
+## Panel Case Types
+
+```{r figure-6}
+#| fig-cap: "Panel Case Types — Historical Trend"
+#| fig-width: 6.5
+#| fig-height: 4
+
+plot_panel_case_types <- function(data, shared_y = FALSE) {
+  panel_long <- data |>
+    group_by(year = end_year) |>
+    summarize(
+      fel   = sum(panels_fel,   na.rm = TRUE),
+      msdo  = sum(panels_msdo,  na.rm = TRUE),
+      civil = sum(panels_civil, na.rm = TRUE),
+      other = sum(panels_other, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    pivot_longer(
+      cols = c(fel, msdo, civil, other),
+      names_to = "type",
+      values_to = "count"
+    ) |>
+    mutate(
+      type = recode(type,
+                    fel   = "Felony",
+                    msdo  = "Misdemeanor",
+                    civil = "Civil",
+                    other = "Other"),
+      type = factor(type, levels = c("Civil", "Felony", "Other", "Misdemeanor"))
+    )
+
+  y_max <- max(panel_long$count, na.rm = TRUE)
+
+  p <- ggplot(panel_long, aes(x = year, y = count)) +
+    geom_line(aes(group = 1), color = "#808080", linewidth = 0.8) +
+    geom_point(color = "#808080", size = 2) +
+    facet_wrap(~ type, nrow = 2, ncol = 2, scales = if (shared_y) "fixed" else "free_y") +
+    scale_y_continuous(
+      labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+      limits = if (shared_y) c(0, y_max * 1.05) else NULL
+    ) +
+    scale_x_continuous(
+      breaks = unique(panel_long$year),
+      labels = function(x) paste0("'", substr(x, 3, 4))
+    ) +
+    labs(x = NULL, y = NULL) +
+    theme_minimal(base_size = 10) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      strip.text = element_text(size = 13),
+    axis.text          = element_text(size = 12)
+    )
+
+  p
+}
+
+plot_panel_case_types(jdr_last_ten, shared_y = TRUE)
+```
+
+
+
+<!-- ## Sworn Jurors by Case Type
+
+Bar chart showing the count of sworn jurors by case type (felony, misdemeanor, civil, and other) in the most recent fiscal year. -->
+
+<!-- #### California statewide, FY`r substr(max(jdr_last_five$end_year, na.rm = TRUE), 3, 4)` -->
+
+```{r figure-7}
+#| fig-cap: "Sworn Jurors by Case Type"
+#| fig-width: 6.5
+#| fig-height: 4
+
+sworn_types <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    fel   = sum(sworn_fel,   na.rm = TRUE),
+    msdo  = sum(sworn_msdo,  na.rm = TRUE),
+    civil = sum(sworn_civil, na.rm = TRUE),
+    other = sum(sworn_other, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+sworn_current <- sworn_types |>
+  filter(year == max(year)) |>
+  pivot_longer(cols = -year, names_to = "type", values_to = "count") |>
+  mutate(type = factor(type, levels = c("fel", "msdo", "civil", "other"),
+                       labels = c("Felony", "Misdemeanor", "Civil", "Other")))
+
+# ggplot(sworn_current, aes(x = reorder(type, count), y = count, fill = type)) +
+#   geom_col(width = 0.6) +
+#   geom_text(
+#     aes(label = dplyr::case_when(
+#       count >= 1e6 ~ paste0(round(count / 1e6, 1), "m"),
+#       count >= 1e3 ~ paste0(round(count / 1e3, 1), "k"),
+#       TRUE ~ as.character(count)
+#     )),
+#     hjust = -0.3,
+#     size = 4.5,
+#     family = "roboto"
+#   ) +
+#   scale_y_continuous(
+#     labels = function(x) {
+#       scales::label_number(scale_cut = scales::cut_short_scale())(x)
+#     },
+#     expand = expansion(mult = c(0, 0.15))
+#   ) +
+#   scale_fill_manual(
+#     values = c("Felony" = "#808080", "Misdemeanor" = "#808080",
+#                "Civil" = "#808080", "Other" = "#808080")
+#   ) +
+#   labs(
+#     x        = NULL,
+#     y        = NULL,
+#     fill     = NULL
+#   ) +
+#   coord_flip() +
+#   theme_minimal(base_size = 11) +
+#   theme(
+#     panel.grid.major   = element_blank(),
+#     panel.grid.minor   = element_blank(),
+#     legend.position    = "none",
+#     plot.margin        = margin(t = 16, r = 12, b = 8, l = 12),
+#     axis.text          = element_text(size = 12),
+#     strip.text       = element_text(size = 13)
+#   )
+```
+
+
+## Sworn Case Types
+
+Line chart showing the trend in sworn jurors by case type from FY 2016 across the past 10 fiscal years.
+
+
+```{r figure-8}
+#| fig-cap: "Sworn Case Types — Historical Trend"
+#| fig-width: 6.5
+#| fig-height: 4
+
+plot_sworn_case_types <- function(data, shared_y = FALSE) {
+  sworn_long <- data |>
+    group_by(year = end_year) |>
+    summarize(
+      fel   = sum(sworn_fel,   na.rm = TRUE),
+      msdo  = sum(sworn_msdo,  na.rm = TRUE),
+      civil = sum(sworn_civil, na.rm = TRUE),
+      other = sum(sworn_other, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    pivot_longer(
+      cols = c(fel, msdo, civil, other),
+      names_to = "type",
+      values_to = "count"
+    ) |>
+    mutate(
+      type = recode(type,
+                    fel   = "Felony",
+                    msdo  = "Misdemeanor",
+                    civil = "Civil",
+                    other = "Other"),
+      type = factor(type, levels = c("Civil", "Felony", "Other", "Misdemeanor"))
+    )
+
+  y_max <- max(sworn_long$count, na.rm = TRUE)
+
+  ggplot(sworn_long, aes(x = year, y = count)) +
+    geom_line(aes(group = 1), color = "#808080", linewidth = 0.8) +
+    geom_point(color = "#808080", size = 2) +
+    facet_wrap(~ type, nrow = 2, ncol = 2, scales = if (shared_y) "fixed" else "free_y") +
+    scale_y_continuous(
+      labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+      limits = if (shared_y) c(0, y_max * 1.05) else NULL
+    ) +
+    scale_x_continuous(
+      breaks = unique(sworn_long$year),
+      labels = function(x) paste0("'", substr(x, 3, 4))
+    ) +
+    labs(x = NULL, y = NULL) +
+    theme_minimal(base_size = 10) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text        = element_text(size = 12),
+      strip.text       = element_text(size = 11)
+    )
+}
+
+plot_sworn_case_types(jdr_last_ten, shared_y = TRUE)
+```
+
+
+<!-- ## One Day Jury Service by Mode
+
+Bar chart showing the count of one-day jurors by modality (in-person and teleconference) in the most recent fiscal year. -->
+
+```{r figure-9}
+#| fig-cap: "One-Day Jury Service by Modality"
+#| fig-width: 6.5
+#| fig-height: 4
+
+oneday_types <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    inperson = sum(oneday_inperson, na.rm = TRUE),
+    telweb   = sum(oneday_telweb,   na.rm = TRUE),
+    .groups = "drop"
+  )
+
+oneday_current <- oneday_types |>
+  filter(year == max(year)) |>
+  pivot_longer(cols = -year, names_to = "modality", values_to = "count") |>
+  mutate(modality = factor(modality, levels = c("inperson", "telweb"),
+                           labels = c("In-Person", "On Call or Standby")))
+
+# ggplot(oneday_current, aes(x = reorder(modality, count), y = count, fill = modality)) +
+#   geom_col(width = 0.6) +
+#   geom_text(
+#     aes(label = dplyr::case_when(
+#       count >= 1e6 ~ paste0(round(count / 1e6, 1), "m"),
+#       count >= 1e3 ~ paste0(round(count / 1e3, 1), "k"),
+#       TRUE ~ as.character(count)
+#     )),
+#     hjust = -0.3,
+#     size = 4.5
+#   ) +
+#   scale_y_continuous(
+#     labels = function(x) {
+#       dplyr::case_when(
+#         x >= 1e6 ~ paste0(round(x / 1e6, 1), "m"),
+#         x >= 1e3 ~ paste0(round(x / 1e3,  0), "k"),
+#         TRUE     ~ as.character(x)
+#       )
+#     },
+#     expand = expansion(mult = c(0, 0.15))
+#   ) +
+#   scale_fill_manual(
+#     values = c("In-Person" = "#808080", "On Call or Standby" = "#808080")
+#   ) +
+#   labs(
+#     x        = NULL,
+#     y        = NULL,
+#     fill     = NULL
+#   ) +
+#   coord_flip() +
+#   theme_minimal(base_size = 11) +
+#   theme(
+#     panel.grid.major   = element_blank(),
+#     panel.grid.minor   = element_blank(),
+#     legend.position    = "none",
+#     plot.margin        = margin(t = 16, r = 12, b = 8, l = 12),
+#     axis.text        = element_text(size = 12),
+#     strip.text       = element_text(size = 13)
+#   )
+```
+
+
+
+## One Day Service Mode 
+
+Line chart showing the trend in one-day jury service by modality from FY 2016 baseline across the past ten fiscal years.
+
+
+```{r figure-10}
+#| fig-cap: "One-Day Jury Service Modality"
+#| fig-width: 6.5
+#| fig-height: 2.5
+
+plot_oneday_modality <- function(data, shared_y = FALSE) {
+  oneday_long <- data |>
+    group_by(year = end_year) |>
+    summarize(
+      inperson = sum(oneday_inperson, na.rm = TRUE),
+      telweb   = sum(oneday_telweb,   na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    pivot_longer(
+      cols = c(inperson, telweb),
+      names_to = "modality",
+      values_to = "count"
+    ) |>
+    mutate(
+      modality = recode(modality,
+                        inperson = "In-Person",
+                        telweb   = "On Call or Standby")
+    )
+
+  y_max <- max(oneday_long$count, na.rm = TRUE)
+
+  ggplot(oneday_long, aes(x = year, y = count)) +
+    geom_line(aes(group = 1), color = "#808080", linewidth = 0.8) +
+    geom_point(color = "#808080", size = 2) +
+    facet_wrap(~ modality, ncol = 2, scales = if (shared_y) "fixed" else "free_y") +
+    scale_y_continuous(
+      labels = scales::label_number(scale_cut = scales::cut_short_scale()),
+      limits = if (shared_y) c(0, y_max * 1.05) else NULL
+    ) +
+    scale_x_continuous(
+      breaks = unique(oneday_long$year),
+      labels = function(x) paste0("'", substr(x, 3, 4))
+    ) +
+    labs(x = NULL, y = NULL) +
+    theme_minimal(base_size = 10) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text        = element_text(size = 12),
+      strip.text       = element_text(size = 13)
+    )
+}
+
+plot_oneday_modality(jdr_last_ten, shared_y = TRUE)
+```
+
+
+---
+
+# Tables
+
+## Table 1: Jury utilization Summary
+
+
+```{r period-analysis}
+#| tbl-cap: "Jury utilization Metrics Summary by Year"
+
+# Original gt() implementation — kept for reference
+# jury_utilization |>
+#   filter(year >= 2016) |>
+#   arrange(desc(year)) |>
+#   transmute(
+#     year = paste0("'", substr(year, 3, 4)),
+#     summons = summons,
+#     postin = postin,
+#     available = qualified,
+#     unavailable = unavailable,
+#     utilization_pct = utilization_pct
+#   ) |>
+#   gt() |>
+#   cols_label(
+#     year = "Fiscal Year",
+#     summons = "Summoned",
+#     postin = "Postponed-In",
+#     available = "Available",
+#     unavailable = "Unavailable",
+#     utilization_pct = "utilization %"
+#   ) |>
+#   fmt_number(
+#     columns = c(summons, postin, available, unavailable),
+#     decimals = 0,
+#     sep_mark = ","
+#   ) |>
+#   fmt_number(
+#     columns = utilization_pct,
+#     decimals = 1
+#   )
+
+df_table_1 <- jury_utilization |>
+  ungroup() |>
+  filter(year >= 2016) |>
+  arrange(desc(year)) |>
+  mutate(
+    year = paste0("'", substr(year, 3, 4)),
+    summons = label_comma(accuracy = 1)(summons),
+    postin = label_comma(accuracy = 1)(postin),
+    available = label_comma(accuracy = 1)(qualified),
+    unavailable = label_comma(accuracy = 1)(unavailable),
+    utilization_pct = sprintf("%.1f", utilization_pct)
+  ) |>
+  select(year, summons, postin, available, unavailable, utilization_pct) |>
+  as.data.frame()
+
+message("df_table_1 ncol = ", ncol(df_table_1),
+        " | names = ", paste(names(df_table_1), collapse = ", "))
+
+style_cols <- c(
+      "Fiscal Year", "Summoned", "Postponed-In",
+      "Available", "Unavailable", "utilization %"
+    )
+
+df_table_1 |>
+  tt(
+    cols = all_of(df_table_1 |> names()),
+    col_names = style_cols,
+    #preamble =`#set text(font: "Times New Roman")`,
+    rownames = TRUE
+  ) |>
+  # tt_header_above(
+  #   c(" " = 1, "Inputs" = 2, "Outcomes" = 3)
+  # ) |>
+  tt_column(
+    c(summons, postin, available, unavailable, utilization_pct),
+    align = "right"
+  ) |>
+  tt_column(utilization_pct) |>
+  tt_style(
+   # striped = TRUE,
+    inset = "6pt",
+    position = "center"
+  )
+```
+
+## Table 2: Unavailable Juror Subcategories
+
+```{r table-2}
+#| tbl-cap: "Unavailable Prospective Jurors by Reason"
+df_table_2 <- unavailable |>
+  select(year, ex, disq, dism, undel, fta, pos) |>
+  arrange(desc(year)) |>
+  mutate(
+    year = paste0("'", substr(year, 3, 4)),
+    ex = label_comma(accuracy = 1)(ex),
+    disq = label_comma(accuracy = 1)(disq),
+    dism = label_comma(accuracy = 1)(dism),
+    undel = label_comma(accuracy = 1)(undel),
+    fta = label_comma(accuracy = 1)(fta),
+    pos = label_comma(accuracy = 1)(pos)
+  ) |>
+  as.data.frame()
+
+style_cols_2 <- c(
+  "Fiscal Year", "Excused", "Disqualified", "Dismissed",
+  "Undelivered", "Failure to Appear", "Postponed Out"
+)
+
+df_table_2 |>
+  tt(
+    cols = all_of(df_table_2 |> names()),
+    col_names = style_cols_2,
+    rownames = TRUE
+  ) |>
+  tt_column(
+    c(ex, disq, dism, undel, fta, pos),
+    align = "right"
+  ) |>
+  tt_style(
+    inset = "6pt",
+    position = "center"
+  )
+```
+
+## Table 4: Juror Utilization Pipeline Summary
+
+```{r table-3}
+#| tbl-cap: "Jury Utilization Pipeline: Mean Percentages"
+df_table_3 <- pipeline |>
+  select(year, told_to_report, sent_for_sel, panel_used, juror_utilization) |>
+  arrange(desc(year)) |>
+  mutate(
+    year = paste0("'", substr(year, 3, 4)),
+    told_to_report = sprintf("%.1f", told_to_report),
+    sent_for_sel = sprintf("%.1f", sent_for_sel),
+    panel_used = sprintf("%.1f", panel_used),
+    juror_utilization = sprintf("%.1f", juror_utilization)
+  ) |>
+  as.data.frame()
+
+style_cols_3 <- c(
+  "Fiscal Year", "Told to Report (%)", "Sent for Selection (%)",
+  "Panel Used (%)", "Juror Utilization (%)"
+)
+
+df_table_3 |>
+  tt(
+    cols = all_of(df_table_3 |> names()),
+    col_names = style_cols_3,
+    rownames = TRUE
+  ) |>
+  tt_column(
+    c(told_to_report, sent_for_sel, panel_used, juror_utilization),
+    align = "right"
+  ) |>
+  tt_style(
+    inset = "6pt",
+    position = "center"
+  )
+```
+
+## Table 5: Panel Distribution by Case Type
+
+```{r table-4}
+#| tbl-cap: "Panel Distribution by Case Type"
+panel_types <- jdr_last_ten |>
+  group_by(year = end_year) |>
+  summarize(
+    fel   = sum(panels_fel,   na.rm = TRUE),
+    msdo  = sum(panels_msdo,  na.rm = TRUE),
+    civil = sum(panels_civil, na.rm = TRUE),
+    other = sum(panels_other, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+df_table_4 <- panel_types |>
+  arrange(desc(year)) |>
+  mutate(
+    year = paste0("'", substr(year, 3, 4)),
+    fel = label_comma(accuracy = 1)(fel),
+    msdo = label_comma(accuracy = 1)(msdo),
+    civil = label_comma(accuracy = 1)(civil),
+    other = label_comma(accuracy = 1)(other)
+  ) |>
+  as.data.frame()
+
+style_cols_4 <- c("Fiscal Year", "Felony", "Misdemeanor", "Civil", "Other")
+
+df_table_4 |>
+  tt(
+    cols = all_of(df_table_4 |> names()),
+    col_names = style_cols_4,
+    rownames = TRUE
+  ) |>
+  tt_column(
+    c(fel, msdo, civil, other),
+    align = "right"
+  ) |>
+  tt_style(
+    inset = "6pt",
+    position = "center"
+  )
+```
+
+## Table 6: Sworn Jurors by Case Type
+
+```{r table-5}
+#| tbl-cap: "Sworn Jurors by Case Type"
+df_table_5 <- sworn_types |>
+  arrange(desc(year)) |>
+  mutate(
+    year = paste0("'", substr(year, 3, 4)),
+    fel = label_comma(accuracy = 1)(fel),
+    msdo = label_comma(accuracy = 1)(msdo),
+    civil = label_comma(accuracy = 1)(civil),
+    other = label_comma(accuracy = 1)(other)
+  ) |>
+  as.data.frame()
+
+style_cols_5 <- c("Fiscal Year", "Felony", "Misdemeanor", "Civil", "Other")
+
+df_table_5 |>
+  tt(
+    cols = all_of(df_table_5 |> names()),
+    col_names = style_cols_5,
+    rownames = TRUE
+  ) |>
+  tt_column(
+    c(fel, msdo, civil, other),
+    align = "right"
+  ) |>
+  tt_style(
+    inset = "6pt",
+    position = "center"
+  )
+```
+
+## Table 7: One-Day Jury Service by Modality
+
+```{r table-6}
+#| tbl-cap: "One-Day Jury Service by Modality"
+df_table_6 <- oneday_types |>
+  arrange(desc(year)) |>
+  mutate(
+    year = paste0("'", substr(year, 3, 4)),
+    inperson = label_comma(accuracy = 1)(inperson),
+    telweb = label_comma(accuracy = 1)(telweb)
+  ) |>
+  as.data.frame()
+
+style_cols_6 <- c("Fiscal Year", "In-Person", "Teleconference")
+
+df_table_6 |>
+  tt(
+    cols = all_of(df_table_6 |> names()),
+    col_names = style_cols_6,
+    rownames = TRUE
+  ) |>
+  tt_column(
+    c(inperson, telweb),
+    align = "right"
+  ) |>
+  tt_style(
+    inset = "6pt",
+    position = "center"
+  )
+```
+

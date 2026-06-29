@@ -1,0 +1,25 @@
+**/.pbi/localSettings.json
+**/.pbi/cache.abf
+scrap/viz
+pbi-reports/
+.claude/
+
+# RStudio local IDE state
+.Rproj.user/
+
+# Sensitive / raw jury data - keep out of public repo
+data/raw/
+data/processed/
+
+# Generated htmlwidgets / rendered output (rebuildable from source)
+sankey.html
+sankey_files/
+code/sankey/sankey_files/
+code/quarto/quarto_html/
+output_viz/
+
+# Large bundled binaries / tools (not source)
+scrap/tools/
+
+# Node dependencies (reinstall via npm install)
+node_modules/

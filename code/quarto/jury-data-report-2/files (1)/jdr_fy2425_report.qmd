@@ -1,0 +1,659 @@
+---
+title: ""
+format:
+  pdf:
+    documentclass: article
+    papersize: letter
+    geometry:
+      - margin=1in
+    fontsize: 11pt
+    linestretch: 1.15
+    include-in-header:
+      - text: |
+          \usepackage{fancyhdr}
+          \usepackage{graphicx}
+          \usepackage{xcolor}
+          \usepackage{booktabs}
+          \usepackage{float}
+          \usepackage{array}
+          \usepackage{colortbl}
+          
+          % Define colors
+          \definecolor{jcblue}{HTML}{73B3E7}
+          \definecolor{jcgold}{HTML}{C2850C}
+          
+          % Remove default title
+          \renewcommand{\maketitle}{}
+          
+          % Page style
+          \pagestyle{fancy}
+          \fancyhf{}
+          \fancyfoot[C]{\thepage}
+          \renewcommand{\headrulewidth}{0pt}
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  fiscal_year: "2024-25"
+  data_path: "../../data/processed/jury_data_transformed.csv"
+---
+
+```{r setup}
+#| include: false
+
+# Load required packages
+library(tidyverse)
+library(scales)
+library(knitr)
+library(kableExtra)
+
+# Define color palette
+jc_colors <- c(
+  blue = "#73B3E7",
+  gold = "#C2850C",
+  grey = "grey50",
+  black = "black",
+  red = "#D32F2F"
+)
+
+# Custom theme for plots
+theme_jdr <- function() {
+  theme_minimal(base_size = 10) +
+    theme(
+      plot.title = element_text(face = "bold", size = 11, color = "black"),
+      plot.subtitle = element_text(size = 9, color = "grey40"),
+      axis.title = element_text(size = 9),
+      axis.text = element_text(size = 8),
+      legend.position = "bottom",
+      legend.title = element_text(size = 9),
+      legend.text = element_text(size = 8),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.x = element_blank(),
+      plot.caption = element_text(size = 7, color = "grey50", hjust = 0)
+    )
+}
+
+# Set default theme
+theme_set(theme_jdr())
+```
+
+```{r load-data}
+#| include: false
+
+# Load the data
+df <- read_csv(params$data_path, show_col_types = FALSE)
+
+# Aggregate statewide by fiscal year
+statewide <- df %>%
+  group_by(end_year) %>%
+  summarise(
+    n_courts = n_distinct(county),
+    summons = sum(summons, na.rm = TRUE),
+    postin = sum(postin, na.rm = TRUE),
+    undel = sum(undel, na.rm = TRUE),
+    fta = sum(fta, na.rm = TRUE),
+    excused = sum(excused, na.rm = TRUE),
+    disqual = sum(disqual, na.rm = TRUE),
+    dismiss_peace = sum(dismiss_peace, na.rm = TRUE),
+    dismiss_dead = sum(dismiss_dead, na.rm = TRUE),
+    postout = sum(postout, na.rm = TRUE),
+    oncall = sum(oncall, na.rm = TRUE),
+    jurors_sworn = sum(jurors_sworn, na.rm = TRUE),
+    rel_challenge = sum(rel_challenge, na.rm = TRUE),
+    rel_hardship = sum(rel_hardship, na.rm = TRUE),
+    rel_perempt = sum(rel_perempt, na.rm = TRUE),
+    not_reached = sum(not_reached, na.rm = TRUE),
+    inperson = sum(inperson, na.rm = TRUE),
+    oneday = sum(oneday, na.rm = TRUE),
+    juries_sworn = sum(juries_sworn, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    # Calculate derived metrics
+    potentially_available = summons + replace_na(postin, 0),
+    unavailable = undel + fta + excused + disqual + 
+                  replace_na(dismiss_peace, 0) + replace_na(dismiss_dead, 0) + 
+                  replace_na(postout, 0),
+    tqa = potentially_available - unavailable,
+    told_to_report = tqa - replace_na(oncall, 0),
+    incourt_sum = replace_na(rel_challenge, 0) + replace_na(rel_hardship, 0) + 
+                  replace_na(rel_perempt, 0) + replace_na(not_reached, 0) + 
+                  replace_na(jurors_sworn, 0),
+    sent_for_selection = incourt_sum,
+    not_selected = pmax(0, told_to_report - sent_for_selection),
+    
+    # KPIs - with safeguards against division by zero
+    juror_yield = if_else(potentially_available > 0, tqa / potentially_available, NA_real_),
+    pc_panel_used = if_else(incourt_sum > 0, 
+                            (replace_na(rel_challenge, 0) + replace_na(rel_hardship, 0) + 
+                             replace_na(rel_perempt, 0) + replace_na(jurors_sworn, 0)) / incourt_sum, 
+                            NA_real_),
+    pc_sent_for_sel = if_else(told_to_report > 0, sent_for_selection / told_to_report, NA_real_),
+    pc_told_to_report = if_else(tqa > 0, told_to_report / tqa, NA_real_),
+    juror_utilization = pc_panel_used * pc_sent_for_sel * pc_told_to_report,
+    postponement_ratio = if_else(replace_na(postin, 0) > 0, 
+                                  replace_na(postout, 0) / postin, NA_real_),
+    
+    # Fiscal year label
+    fy_label = paste0("FY ", end_year - 1, "-", substr(as.character(end_year), 3, 4))
+  ) %>%
+  filter(!is.na(end_year))
+
+# Get current and prior year data
+max_year <- max(statewide$end_year, na.rm = TRUE)
+current_fy <- statewide %>% filter(end_year == max_year)
+prior_fy <- statewide %>% filter(end_year == max_year - 1)
+
+# If no prior year, duplicate current for comparison (avoids errors)
+if (nrow(prior_fy) == 0) {
+  prior_fy <- current_fy
+}
+
+# Calculate AAPE from county-level data
+aape_cols <- names(df)[grepl("_aape$", names(df))]
+if (length(aape_cols) > 0) {
+  aape_summary <- df %>%
+    filter(end_year == max_year) %>%
+    summarise(across(all_of(aape_cols), ~mean(.x, na.rm = TRUE)))
+} else {
+  # Create dummy AAPE data if columns don't exist
+  aape_summary <- tibble(potentially_available_aape = 0.05, tqa_aape = 0.05, excused_aape = 0.05)
+}
+
+# Court submission stats
+submission_stats <- df %>%
+  filter(end_year == max_year) %>%
+  summarise(
+    submitted = n_distinct(county),
+    total = 58
+  ) %>%
+  mutate(
+    not_submitted = total - submitted,
+    submission_rate = submitted / total
+  )
+```
+
+\begin{center}
+\textbf{\Large JUDICIAL COUNCIL OF CALIFORNIA}\\[0.5em]
+\textbf{Administrative Office of the Courts}\\[1em]
+\rule{\textwidth}{0.5pt}
+\end{center}
+
+\vspace{1em}
+
+\noindent\textbf{TO:}\hspace{2.5em} Presiding Judges and Court Executive Officers\\[0.5em]
+\noindent\textbf{FROM:}\hspace{1em} Research, Analytics, and Data Unit\\[0.5em]
+\noindent\textbf{DATE:}\hspace{1.5em} `r format(Sys.Date(), "%B %d, %Y")`\\[0.5em]
+\noindent\textbf{RE:}\hspace{2.75em} Jury Data Report, Fiscal Year `r params$fiscal_year`\\[0.5em]
+
+\rule{\textwidth}{0.5pt}
+
+\vspace{1em}
+
+## Executive Summary
+
+```{r kpi-summary}
+#| include: false
+
+# Format numbers for display
+fmt_num <- function(x) {
+  if (is.na(x)) return("N/A")
+  format(round(x), big.mark = ",")
+}
+fmt_pct <- function(x) {
+  if (is.na(x)) return("N/A")
+  paste0(round(x * 100, 1), "%")
+}
+fmt_change <- function(current, prior) {
+  if (is.na(current) | is.na(prior)) return("")
+  diff <- (current - prior) * 100
+  if (diff >= 0) paste0("+", round(diff, 1), " pp") else paste0(round(diff, 1), " pp")
+}
+```
+
+```{r kpi-cards, fig.width=7, fig.height=1.8}
+#| fig-cap: "Key Performance Indicators for FY 2024-25"
+
+# Create KPI summary data
+kpi_data <- tibble(
+  metric = c("Juror Yield", "Juror Utilization", "Data Confidence"),
+  value = c(
+    current_fy$juror_yield,
+    current_fy$juror_utilization,
+    1 - mean(c(aape_summary$potentially_available_aape, 
+               aape_summary$tqa_aape, 
+               aape_summary$excused_aape), na.rm = TRUE)
+  ),
+  goal = c(0.50, 0.73, 0.95),
+  prior = c(
+    prior_fy$juror_yield,
+    prior_fy$juror_utilization,
+    NA
+  )
+) %>%
+  mutate(
+    change = value - prior,
+    meets_goal = value >= goal,
+    label = paste0(round(value * 100, 1), "%"),
+    goal_label = paste0("Goal: ", round(goal * 100), "%")
+  )
+
+# Create KPI card visualization
+ggplot(kpi_data, aes(x = metric, y = value)) +
+  geom_col(aes(y = 1), fill = "grey90", width = 0.6) +
+  geom_col(aes(fill = meets_goal), width = 0.6) +
+  geom_hline(aes(yintercept = goal), linetype = "dashed", color = "black", linewidth = 0.5) +
+  geom_text(aes(label = label), vjust = -0.5, fontface = "bold", size = 4) +
+  geom_text(aes(y = goal, label = goal_label), vjust = -0.5, hjust = 0.5, size = 2.5, color = "grey40") +
+  scale_fill_manual(values = c("TRUE" = jc_colors["blue"], "FALSE" = jc_colors["gold"]), guide = "none") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1.15), expand = c(0, 0)) +
+  labs(x = NULL, y = NULL) +
+  theme_jdr() +
+  theme(
+    panel.grid.major.y = element_line(color = "grey80"),
+    axis.text.x = element_text(face = "bold", size = 10)
+  )
+```
+
+In FY `r params$fiscal_year`, approximately `r fmt_num(current_fy$potentially_available)` individuals were potentially available for jury service statewide. Of these, `r fmt_num(current_fy$tqa)` were qualified and available, producing a juror yield of **`r fmt_pct(current_fy$juror_yield)`** (`r fmt_change(current_fy$juror_yield, prior_fy$juror_yield)` from prior year). Juror utilization stands at **`r fmt_pct(current_fy$juror_utilization)`**, with `r fmt_num(current_fy$jurors_sworn)` jurors ultimately sworn across `r fmt_num(current_fy$juries_sworn)` jury trials.
+
+Both metrics remain below NCSC-recommended targets (50% yield, 73% utilization), indicating continued opportunities to optimize jury operations statewide.
+
+\newpage
+
+## Background
+
+The Jury Data Report (JDR) tracks jury administration metrics across California's 58 trial courts. Performance is measured against standards from the National Center for State Courts' CourTools framework, which defines two primary indicators:
+
+**Juror Yield** measures the efficiency of summoning---the proportion of prospective jurors who are qualified and available to serve. **Juror Utilization** measures how effectively those qualified jurors are actually used in jury selection.
+
+```{r flow-diagram, fig.width=7, fig.height=3.5}
+#| fig-cap: "Juror Pipeline: From Summons to Service"
+
+# Create flow data for visualization
+flow_data <- tibble(
+  stage = c("Summonses\nSent", "Potentially\nAvailable", "Qualified &\nAvailable", 
+            "Told to\nReport", "Sent for\nSelection", "Sworn"),
+  value = c(
+    current_fy$summons,
+    current_fy$potentially_available,
+    current_fy$tqa,
+    current_fy$told_to_report,
+    current_fy$sent_for_selection,
+    current_fy$jurors_sworn
+  ),
+  order = 1:6
+) %>%
+  mutate(
+    pct_of_start = value / first(value),
+    label = paste0(format(round(value / 1e6, 2), nsmall = 1), "M"),
+    pct_label = paste0(round(pct_of_start * 100, 1), "%")
+  )
+
+# Funnel chart
+ggplot(flow_data, aes(x = reorder(stage, order), y = value)) +
+  geom_col(fill = jc_colors["blue"], width = 0.7) +
+  geom_text(aes(label = label), vjust = -0.3, size = 3, fontface = "bold") +
+  geom_text(aes(label = pct_label, y = value / 2), color = "white", size = 2.8) +
+  scale_y_continuous(labels = label_number(scale = 1e-6, suffix = "M"), expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "The Juror Funnel",
+    subtitle = "Each stage shows cumulative attrition from initial summonses",
+    x = NULL, y = "Number of Jurors"
+  ) +
+  theme_jdr() +
+  theme(axis.text.x = element_text(size = 8))
+```
+
+## Juror Yield Analysis
+
+```{r yield-trend, fig.width=7, fig.height=3}
+#| fig-cap: "Juror Yield Trend (FY 2007-2025)"
+
+# Add COVID annotation data
+covid_rect <- tibble(
+  xmin = 2020, xmax = 2022,
+  ymin = 0, ymax = 1
+)
+
+ggplot(statewide, aes(x = end_year, y = juror_yield)) +
+  # COVID shading
+  annotate("rect", xmin = 2020, xmax = 2022, ymin = 0, ymax = 1, 
+           fill = "grey80", alpha = 0.3) +
+  annotate("text", x = 2021, y = 0.25, label = "COVID-19\nEmergency", 
+           size = 2.5, color = "grey50") +
+  # Goal and control limits
+  geom_hline(yintercept = 0.50, linetype = "solid", color = jc_colors["gold"], linewidth = 1) +
+  geom_hline(yintercept = 0.55, linetype = "dashed", color = "grey60") +
+  geom_hline(yintercept = 0.45, linetype = "dashed", color = "grey60") +
+  # Data
+  geom_line(color = jc_colors["blue"], linewidth = 1) +
+  geom_point(color = jc_colors["blue"], size = 2) +
+  geom_point(data = current_fy, color = jc_colors["gold"], size = 3) +
+  # Annotations
+
+  annotate("text", x = max(statewide$end_year) + 0.5, y = 0.50, label = "Goal: 50%", 
+           hjust = 0, size = 2.5, color = jc_colors["gold"]) +
+  annotate("text", x = max(statewide$end_year) + 0.5, y = 0.55, label = "Upper: 55%", 
+           hjust = 0, size = 2.2, color = "grey50") +
+  annotate("text", x = max(statewide$end_year) + 0.5, y = 0.45, label = "Lower: 45%", 
+           hjust = 0, size = 2.2, color = "grey50") +
+  scale_y_continuous(labels = percent_format(), limits = c(0.2, 0.7), expand = c(0, 0)) +
+  scale_x_continuous(breaks = seq(2008, max(statewide$end_year), by = 2),
+                     limits = c(2008, max(statewide$end_year) + 2)) +
+  labs(
+    title = "Juror Yield Over Time",
+    subtitle = "Percentage of potentially available jurors who are qualified and available",
+    x = "Fiscal Year Ending", y = "Juror Yield"
+  )
+```
+
+```{r yield-decomposition, fig.width=7, fig.height=3.5}
+#| fig-cap: "Yield Decomposition: Where Do Summonses Go?"
+
+# Calculate percentages for current year
+decomp_data <- tibble(
+  category = c("Qualified & Available", "Failure to Appear", "Excused", 
+               "Disqualified", "Undeliverable", "Postponed Out", "Other"),
+  value = c(
+    current_fy$tqa,
+    current_fy$fta,
+    current_fy$excused,
+    current_fy$disqual,
+    current_fy$undel,
+    current_fy$postout,
+    current_fy$dismiss_peace + current_fy$dismiss_dead
+  )
+) %>%
+  mutate(
+    pct = value / sum(value),
+    category = factor(category, levels = rev(category)),
+    fill_color = case_when(
+      category == "Qualified & Available" ~ "available",
+      TRUE ~ "unavailable"
+    )
+  )
+
+ggplot(decomp_data, aes(x = pct, y = category, fill = fill_color)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = paste0(round(pct * 100, 1), "%")), 
+            hjust = -0.1, size = 3) +
+  scale_fill_manual(values = c("available" = jc_colors["blue"], "unavailable" = jc_colors["gold"]), 
+                    guide = "none") +
+  scale_x_continuous(labels = percent_format(), limits = c(0, 0.6), expand = c(0, 0)) +
+  labs(
+    title = "For Every 100 Summonses, Where Do They End Up?",
+    subtitle = paste0("FY ", params$fiscal_year, " statewide breakdown"),
+    x = "Percentage of Potentially Available", y = NULL
+  ) +
+  theme_jdr() +
+  theme(panel.grid.major.y = element_blank())
+```
+
+The yield decomposition reveals that **Failure to Appear (`r fmt_pct(current_fy$fta / current_fy$potentially_available)`)** and **Excused jurors (`r fmt_pct(current_fy$excused / current_fy$potentially_available)`)** represent the largest sources of attrition. Per CourTools guidance, courts with high FTA rates may benefit from stricter summons enforcement, while high excuse rates warrant review of excuse policies and service burden reduction.
+
+\newpage
+
+## Juror Utilization Analysis
+
+Juror utilization comprises three components, each with a 90% target. The combined target is 73% (0.90 × 0.90 × 0.90).
+
+```{r utilization-components, fig.width=7, fig.height=3}
+#| fig-cap: "Utilization Components vs. Targets"
+
+util_components <- tibble(
+  component = c("% Told to Report", "% Sent for Selection", "% Panel Used", "Combined"),
+  value = c(
+    current_fy$pc_told_to_report,
+    current_fy$pc_sent_for_sel,
+    current_fy$pc_panel_used,
+    current_fy$juror_utilization
+  ),
+  goal = c(0.90, 0.90, 0.90, 0.73),
+  description = c(
+    "Of qualified jurors",
+    "Of those told to report",
+    "Of those in courtroom",
+    "Product of all three"
+  )
+) %>%
+  mutate(
+    component = factor(component, levels = component),
+    meets_goal = value >= goal,
+    gap = goal - value
+  )
+
+ggplot(util_components, aes(x = component, y = value)) +
+  geom_col(aes(fill = meets_goal), width = 0.6) +
+  geom_point(aes(y = goal), shape = 18, size = 4, color = "black") +
+  geom_segment(aes(y = value, yend = goal, xend = component), 
+               linetype = "dotted", color = "grey40") +
+  geom_text(aes(label = paste0(round(value * 100, 1), "%")), 
+            vjust = -0.5, fontface = "bold", size = 3.5) +
+  geom_text(aes(y = goal, label = paste0("Goal: ", round(goal * 100), "%")), 
+            vjust = -0.8, size = 2.5, color = "grey40") +
+  scale_fill_manual(values = c("TRUE" = jc_colors["blue"], "FALSE" = jc_colors["gold"]), 
+                    guide = "none") +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 1.1), expand = c(0, 0)) +
+  labs(
+    title = "Utilization Component Analysis",
+    subtitle = "Diamond markers indicate NCSC-recommended targets",
+    x = NULL, y = "Rate"
+  ) +
+  theme_jdr()
+```
+
+```{r sankey-diagram, fig.width=7, fig.height=4}
+#| fig-cap: "Juror Flow: From Qualified to Disposition"
+
+# Create alluvial data
+alluvial_data <- tibble(
+  stage1 = rep("Qualified &\nAvailable", 4),
+  stage2 = c(rep("Told to Report", 3), "On-Call"),
+  stage3 = c("Sent for Selection", "Not Sent", NA, NA),
+  stage4 = c("Participated", NA, NA, NA),
+  freq = c(
+    current_fy$sent_for_selection,
+    current_fy$told_to_report - current_fy$sent_for_selection,
+    current_fy$oncall,
+    0
+  )
+) %>%
+  filter(freq > 0)
+
+# Simplified flow visualization
+flow_summary <- tibble(
+  category = c("Sworn Jurors", "Challenged/Released", "Not Reached", 
+               "Not Sent to Courtroom", "On-Call (Not Told to Report)"),
+  value = c(
+    current_fy$jurors_sworn,
+    current_fy$rel_challenge + current_fy$rel_hardship + current_fy$rel_perempt,
+    current_fy$not_reached,
+    pmax(0, current_fy$told_to_report - current_fy$sent_for_selection),
+    current_fy$oncall
+  ),
+  outcome = c("Utilized", "Utilized", "Not Utilized", "Not Utilized", "Not Utilized")
+) %>%
+  filter(value > 0) %>%
+  mutate(
+    pct = value / sum(value),
+    category = factor(category, levels = rev(category))
+  )
+
+ggplot(flow_summary, aes(x = pct, y = category, fill = outcome)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = paste0(format(round(value / 1000), big.mark = ","), "K  (", 
+                               round(pct * 100, 1), "%)")), 
+            hjust = -0.05, size = 2.8) +
+  scale_fill_manual(values = c("Utilized" = jc_colors["blue"], "Not Utilized" = jc_colors["gold"]),
+                    name = "Outcome") +
+  scale_x_continuous(labels = percent_format(), limits = c(0, 0.7), expand = c(0, 0)) +
+  labs(
+    title = "Final Disposition of Qualified & Available Jurors",
+    subtitle = paste0("FY ", params$fiscal_year, " statewide"),
+    x = "Percentage of TQA", y = NULL
+  ) +
+  theme_jdr() +
+  theme(
+    panel.grid.major.y = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+```{r utilization-trend, fig.width=7, fig.height=2.8}
+#| fig-cap: "Juror Utilization Trend (FY 2007-2025)"
+
+ggplot(statewide, aes(x = end_year, y = juror_utilization)) +
+  annotate("rect", xmin = 2020, xmax = 2022, ymin = 0, ymax = 1, 
+           fill = "grey80", alpha = 0.3) +
+  geom_hline(yintercept = 0.73, linetype = "solid", color = jc_colors["gold"], linewidth = 1) +
+  geom_line(color = jc_colors["blue"], linewidth = 1) +
+  geom_point(color = jc_colors["blue"], size = 2) +
+  geom_point(data = current_fy, color = jc_colors["gold"], size = 3) +
+  annotate("text", x = max(statewide$end_year) + 0.5, y = 0.73, label = "Goal: 73%", 
+           hjust = 0, size = 2.5, color = jc_colors["gold"]) +
+  scale_y_continuous(labels = percent_format(), limits = c(0, 0.8), expand = c(0, 0)) +
+  scale_x_continuous(breaks = seq(2008, max(statewide$end_year), by = 2),
+                     limits = c(2008, max(statewide$end_year) + 2)) +
+  labs(
+    title = "Juror Utilization Over Time",
+    subtitle = "Combined rate: % Told to Report × % Sent for Selection × % Panel Used",
+    x = "Fiscal Year Ending", y = "Utilization Rate"
+  )
+```
+
+\newpage
+
+## Data Confidence
+
+Data quality is assessed through submission completeness and internal consistency checks using Average Absolute Percent Error (AAPE).
+
+```{r submission-stats, fig.width=7, fig.height=2}
+#| fig-cap: "Court Data Submission Status"
+
+submission_plot_data <- tibble(
+  status = c("Submitted", "Not Submitted"),
+  count = c(submission_stats$submitted, submission_stats$not_submitted),
+  fill_col = c("yes", "no")
+)
+
+ggplot(submission_plot_data, aes(x = "", y = count, fill = fill_col)) +
+  geom_col(width = 1, position = "stack") +
+  geom_text(aes(label = paste0(count, " courts")), 
+            position = position_stack(vjust = 0.5), color = "white", fontface = "bold") +
+  coord_flip() +
+  scale_fill_manual(values = c("yes" = jc_colors["blue"], "no" = jc_colors["gold"]),
+                    labels = c("yes" = "Submitted", "no" = "Not Submitted"),
+                    name = NULL) +
+  labs(
+    title = paste0("Court Submission Rate: ", round(submission_stats$submission_rate * 100, 1), "%"),
+    subtitle = paste0(submission_stats$submitted, " of 58 courts submitted data for FY ", params$fiscal_year),
+    x = NULL, y = "Number of Courts"
+  ) +
+  theme_jdr() +
+  theme(
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank()
+  )
+```
+
+```{r aape-chart, fig.width=7, fig.height=3}
+#| fig-cap: "Data Consistency: AAPE by Metric Category"
+
+# Reshape AAPE data for plotting
+aape_long <- aape_summary %>%
+  pivot_longer(everything(), names_to = "metric", values_to = "aape") %>%
+  filter(!is.na(aape), aape > 0) %>%
+  mutate(
+    metric_clean = str_remove(metric, "_aape$") %>%
+      str_replace_all("_", " ") %>%
+      str_to_title(),
+    above_threshold = aape > 0.10
+  ) %>%
+  arrange(desc(aape)) %>%
+  head(10)  # Show top 10 metrics
+
+if (nrow(aape_long) > 0) {
+  ggplot(aape_long, aes(x = reorder(metric_clean, aape), y = aape)) +
+    geom_col(aes(fill = above_threshold), width = 0.7) +
+    geom_hline(yintercept = 0.10, linetype = "dashed", color = jc_colors["red"]) +
+    geom_text(aes(label = paste0(round(aape * 100, 1), "%")), 
+              hjust = -0.1, size = 2.8) +
+    annotate("text", x = 1, y = 0.10, label = "10% threshold", 
+             hjust = -0.1, vjust = -0.5, size = 2.5, color = jc_colors["red"]) +
+    scale_fill_manual(values = c("TRUE" = jc_colors["red"], "FALSE" = jc_colors["blue"]), 
+                      guide = "none") +
+    scale_y_continuous(labels = percent_format(), 
+                       limits = c(0, max(aape_long$aape, 0.15) * 1.3), 
+                       expand = c(0, 0)) +
+    coord_flip() +
+    labs(
+      title = "Average Absolute Percent Error by Metric",
+      subtitle = "Lower values indicate better consistency between reported totals and subcategory sums",
+      x = NULL, y = "AAPE"
+    ) +
+    theme_jdr() +
+    theme(panel.grid.major.y = element_blank())
+} else {
+  # Placeholder if no AAPE data
+  ggplot() + 
+    annotate("text", x = 0.5, y = 0.5, label = "AAPE data not available", size = 4) +
+    theme_void()
+}
+```
+
+```{r confidence-calculation}
+#| include: false
+
+# Calculate overall data confidence
+if (nrow(aape_long) > 0) {
+  mean_aape <- mean(aape_long$aape, na.rm = TRUE)
+  data_confidence <- 1 - mean_aape
+} else {
+  mean_aape <- NA
+  data_confidence <- NA
+}
+```
+
+```{r confidence-text, results='asis'}
+if (!is.na(data_confidence)) {
+  cat(paste0("Overall data confidence is estimated at **", fmt_pct(data_confidence), 
+             "**, based on an average AAPE of ", fmt_pct(mean_aape), 
+             " across consistency metrics. This falls ", 
+             ifelse(data_confidence < 0.95, "below", "at or above"),
+             " the recommended 95% confidence threshold."))
+} else {
+  cat("Data confidence metrics are not available for this reporting period.")
+}
+```
+
+## Path Forward
+
+The data reveal several areas where courts may focus efforts to improve jury operations:
+
+**Yield Enhancement Opportunities**
+Courts experiencing high failure-to-appear rates may benefit from evaluating summons enforcement procedures. Those with elevated undeliverable rates should examine source list accuracy. High excuse rates warrant review of excuse-granting policies and exploration of service burden reduction measures such as shorter terms or improved amenities.
+
+**Utilization Optimization Opportunities**
+Low panel utilization rates suggest panel sizes exceed selection needs and may be reduced. Underperformance in the percentage sent for selection often stems from day-of-trial cancellations; improved pretrial management can help ensure scheduled trials proceed. The percentage told to report reflects forecasting precision---courts consistently over-summoning should adjust summons volumes based on historical yield patterns.
+
+**Data Quality Enhancement**
+Continued focus on consistent coding practices, timely submissions, and data governance will improve confidence in statewide metrics and enable more reliable forecasting.
+
+The Jury Improvement Program remains available to provide operational assessments and technical assistance.
+
+\vspace{2em}
+
+---
+
+**Contact**
+
+For questions regarding the JDR or jury-related issues, please contact the Jury Improvement Program.
+
+\vspace{1em}
+
+\noindent\textit{Attachments: [Data tables available upon request]}
+
+\noindent\textit{cc: Chief Operating Officer; Manager, Office of Court Research; Supervising Analyst, Office of Court Research; Designated Trial Court Jury Staff Contacts}

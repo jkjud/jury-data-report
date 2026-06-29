@@ -1,0 +1,20 @@
+html, body, #root {
+  margin: 0;
+  font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif;
+}
+
+.page {
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.title {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.sankey-wrap {
+  width: 100%;
+  max-width: 1000px;
+  height: 520px;
+}

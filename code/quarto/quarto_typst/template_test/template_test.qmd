@@ -1,0 +1,13 @@
+---
+title: "Test Document"
+author: "Your Name"
+format: typst
+---
+
+# Introduction
+
+This is a test to see how the template looks.
+
+## Methods
+
+Some content here.
