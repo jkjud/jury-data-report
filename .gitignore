@@ -17,6 +17,11 @@ sankey_files/
 code/sankey/sankey_files/
 code/quarto/quarto_html/
 output_viz/
+code/viz/inperson_pie_html/output/inperson_pie_files/
+code/viz/inperson_pie_html/output/*.zip
+
+# OS cruft
+Thumbs.db
 
 # Large bundled binaries / tools (not source)
 scrap/tools/
